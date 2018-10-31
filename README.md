@@ -5,7 +5,7 @@ Code mainly written Ruoteng Li
 Added some functionalities and bug fixes
 
 ## Dependencies  
-pypng
-matplotlib
-PIL
-numpy
+pypng  
+matplotlib  
+PIL  
+numpy  
