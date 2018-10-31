@@ -4,7 +4,7 @@ Set of tools for reading, visualizing,writting and computing error  optical flow
 Code mainly written Ruoteng Li
 Added some functionalities and bug fixes
 
-##Dependencies  
+## Dependencies  
 pypng
 matplotlib
 PIL
