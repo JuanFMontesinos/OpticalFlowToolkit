@@ -12,9 +12,11 @@ import png
 import numpy as np
 import matplotlib.colors as cl
 import matplotlib.pyplot as plt
-from matplotlib.image import imsave
 from PIL import Image
+import imageio
 import os
+import cv2
+import math
 
 
 UNKNOWN_FLOW_THRESH = 1e7
@@ -34,8 +36,8 @@ def show_flow(filename):
     :param filename: optical flow file
     :return: None
     """
-    flow = read_flow(filename)
-    img = flow_to_image(flow)
+    flow = read_flow(filename)   
+    img = flow_to_image(flow[...,:2])
     plt.imshow(img)
     plt.show()
 
@@ -82,8 +84,12 @@ def visualize_flow(flow, mode='Y'):
 
     return None
 
-
-def read_flow(filename):
+def fp2int(x,ui=8):
+    uis= str(ui)
+    return np.maximum(np.minimum(x*64.0+2.0**(ui-1),2.0**ui-1),0).astype(np.dtype('uint'+uis))
+def int2fp(x,ui=8):
+    return ((x - 2.0 ** (ui-1)) / 64.0)
+def read_flow_flo(filename):
     """
     Modified by Juan Montesinos
     read optical flow from Middlebury .flo file
@@ -135,14 +141,28 @@ def read_flow_png(flow_file):
         if not custom:
             flow[i, :, 2] = flow_data[i][2::planes]
 
-    
     flow[:, :, 0:2] = (flow[:, :, 0:2] - 2 ** 15) / 64.0
     if not custom:
         invalid_idx = (flow[:, :, 2] == 0)
         flow[invalid_idx, 0] = 0
         flow[invalid_idx, 1] = 0
     return flow
-def write_flow_png(flow,filename):
+
+def read_flow(flow_file):
+    filename,extension = os.path.splitext(flow_file)
+    if extension =='.png':
+        return read_flow_png(flow_file)
+    elif extension == '.jpg' or extension == '.jpeg':
+        x = imageio.imread(flow_file)
+        return int2fp(x[...,:2])
+    elif extension == '.flo':
+        return read_flow_flo(flow_file)
+    else:
+        raise Exception('Non recognized file format, use .jpg, .jpeg, .flo, .png')
+        
+        
+        
+def write_flow_png(flow,filename,error=False):
     """
     Added by Juan Montesinos
     A random example shows a mean error of 0.0078 with std 0.0045
@@ -163,10 +183,12 @@ def write_flow_png(flow,filename):
     out = np.zeros((H,W,2),dtype=np.uint16)
     out[:,:,0] =  np.maximum(np.minimum(flow[:,:,0]*64.0+2.0**15,2.0**16-1),0).astype(np.uint16)
     out[:,:,1] =  np.maximum(np.minimum(flow[:,:,1]*64.0+2.0**15,2.0**16-1),0).astype(np.uint16)
-    print(out.shape,out.dtype)
-    png.from_array(out,mode='LA').save(os.path.splitext(filename)[0]+'.png')                       
-
-def write_flow(flow, filename):
+    png.from_array(out,mode='LA').save(os.path.splitext(filename)[0]+'.png')
+    if error:
+        flow= out.astype(np.float32)   
+        flow[:, :, 0:2] = (flow[:, :, 0:2] - 2 ** 15) / 64.0             
+        return flow
+def write_flow_flo(flow, filename):
     """
     write optical flow in Middlebury .flo format
     :param flow: optical flow map
@@ -183,8 +205,35 @@ def write_flow(flow, filename):
     h.tofile(f)
     flow.tofile(f)
     f.close()
+    
 
-
+def write_flow(flow,filename,**kwargs):
+    """
+    Write optical flow in png, flo or jpg format.
+    Note:
+    PNG saving process is ~6 times slower. It maps optical flow to
+    uin16 and saves 2-channel png (gray + alpha).
+    
+    JPG maps flow to uint8. Uses faster scipy libraries. A  3rd channel is free
+    to be used, else it will be filled with zeros.
+    JPG is a compressive method which requires ~25 times less memory.
+    
+    FLO is the standard flo format for optical flow.
+    """
+    root,extension = os.path.splitext(filename)
+    if extension =='.png':
+        return write_flow_png(flow,filename)
+    elif extension == '.jpg' or extension == '.jpeg':
+        flow = fp2int(flow)
+        (H,W,C) = flow.shape
+        if C == 2:
+            zeros = np.zeros((H,W,1),dtype=np.uint8)
+            flow = np.concatenate([flow,zeros],axis=2)
+        imageio.imwrite(filename,flow)        
+    elif extension == '.flo':
+        write_flow_flo(flow,filename,*kwargs)
+    else:
+        raise Exception('Non recognized file format, use .jpg, .jpeg, .flo, .png')    
 def segment_flow(flow):
     h = flow.shape[0]
     w = flow.shape[1]
@@ -506,8 +555,83 @@ def compute_color(u, v):
         img[:, :, i] = np.uint8(np.floor(255 * col*(1-nanIdx)))
 
     return img
+def colortest():
+    truerange = 1
+    height = 151
+    width  = 151
+    range_f = truerange * 1.04
+    
+    s2 = int(round(height/2))
+    x, y = np.meshgrid(np.arange(1, height + 1, 1), np.arange(1, width + 1, 1))
+    
+    u = x*range_f/s2 - range_f
+    v = y*range_f/s2 - range_f
+    
+    img = computeColor(u/truerange, v/truerange)
+    
+    img[s2,:,:] = 0
+    img[:,s2,:] = 0
+    
+    cv2.imshow('test color pattern',img)
+    k = cv2.waitKey()
+    
+    F = np.stack((u, v), axis = 2)
+    write_flow(F, 'colorTest.flo')
+    
+    flow = read_flow('colorTest.flo')
+    
+    u = flow[: , : , 0]
+    v = flow[: , : , 1]		
+    
+    img = computeColor.computeColor(u/truerange, v/truerange)
+    
+    img[s2,:,:] = 0
+    img[:,s2,:] = 0
+    
+    cv2.imshow('saved and reloaded test color pattern',img)
+    k = cv2.waitKey()
+    
+    # color encoding scheme for optical flow
+    img = computeColor.computeColor(u/range_f/math.sqrt(2), v/range_f/math.sqrt(2));
+    
+    cv2.imshow('optical flow color encoding scheme',img)
+    cv2.imwrite('colorTest.png', img)
+    k = cv2.waitKey()
+def computeColor(u, v):
 
+	colorwheel = make_color_wheel();
+	nan_u = np.isnan(u)
+	nan_v = np.isnan(v)
+	nan_u = np.where(nan_u)
+	nan_v = np.where(nan_v) 
 
+	u[nan_u] = 0
+	u[nan_v] = 0
+	v[nan_u] = 0 
+	v[nan_v] = 0
+
+	ncols = colorwheel.shape[0]
+	radius = np.sqrt(u**2 + v**2)
+	a = np.arctan2(-v, -u) / np.pi
+	fk = (a+1) /2 * (ncols-1) # -1~1 maped to 1~ncols
+	k0 = fk.astype(np.uint8)	 # 1, 2, ..., ncols
+	k1 = k0+1;
+	k1[k1 == ncols] = 0
+	f = fk - k0
+
+	img = np.empty([k1.shape[0], k1.shape[1],3])
+	ncolors = colorwheel.shape[1]
+	for i in range(ncolors):
+		tmp = colorwheel[:,i]
+		col0 = tmp[k0]/255
+		col1 = tmp[k1]/255
+		col = (1-f)*col0 + f*col1
+		idx = radius <= 1
+		col[idx] = 1 - radius[idx]*(1-col[idx]) # increase saturation with radius    
+		col[~idx] *= 0.75 # out of range
+		img[:,:,2-i] = np.floor(255*col).astype(np.uint8)
+
+	return img.astype(np.uint8)
 def make_color_wheel():
     """
     Generate color wheel according Middlebury color code
