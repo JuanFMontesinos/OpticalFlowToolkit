@@ -5,7 +5,8 @@ Code mainly written Ruoteng Li
 Added some functionalities and bug fixes
 
 ## Dependencies  
-pypng  
+pypng (Optional, for saving png or reading png/kitti files) 
 matplotlib  
 PIL  
 numpy  
+imageio (optional, for saving jpeg or reading jpeg)
