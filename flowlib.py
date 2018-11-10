@@ -17,7 +17,7 @@ import imageio
 import os
 import cv2
 import math
-
+import multiprocessing as mp
 
 UNKNOWN_FLOW_THRESH = 1e7
 SMALLFLOW = 0.0
@@ -83,7 +83,6 @@ def visualize_flow(flow, mode='Y'):
         plt.show()
 
     return None
-
 def fp2int(x,ui=8):
     uis= str(ui)
     return np.maximum(np.minimum(x*64.0+2.0**(ui-1),2.0**ui-1),0).astype(np.dtype('uint'+uis))
@@ -148,7 +147,7 @@ def read_flow_png(flow_file):
         flow[invalid_idx, 1] = 0
     return flow
 
-def read_flow(flow_file):
+def read_flow_core(flow_file):
     filename,extension = os.path.splitext(flow_file)
     if extension =='.png':
         return read_flow_png(flow_file)
@@ -160,8 +159,16 @@ def read_flow(flow_file):
     else:
         raise Exception('Non recognized file format, use .jpg, .jpeg, .flo, .png')
         
-        
-        
+def read_flow(flow_files):
+    if isinstance(flow_files,str):
+        return read_flow_core(flow_files)
+    elif isinstance(flow_files,list):
+        pool = mp.Pool()
+        results = [pool.apply(read_flow_core, args =(file,)) for file in flow_files]
+        pool.close()
+        return np.stack(results)
+    else:
+        raise Exception('Read_flow requires file_path or list of ordered file_paths as input')
 def write_flow_png(flow,filename,error=False):
     """
     Added by Juan Montesinos
@@ -234,6 +241,7 @@ def write_flow(flow,filename,**kwargs):
         write_flow_flo(flow,filename,*kwargs)
     else:
         raise Exception('Non recognized file format, use .jpg, .jpeg, .flo, .png')    
+  
 def segment_flow(flow):
     h = flow.shape[0]
     w = flow.shape[1]
@@ -510,7 +518,7 @@ def scale_image(image, new_range):
     min_val_new = np.array(min(new_range), dtype=np.float32)
     max_val_new = np.array(max(new_range), dtype=np.float32)
     scaled_image = (image - min_val) / (max_val - min_val) * (max_val_new - min_val_new) + min_val_new
-    return scaled_image.astype(np.uint8)
+    return scaled_image
 
 
 def compute_color(u, v):
@@ -680,3 +688,4 @@ def make_color_wheel():
     colorwheel[col:col+MR, 0] = 255
 
     return colorwheel
+
