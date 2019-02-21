@@ -1,4 +1,5 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 # ==============================
 # flowlib.py
@@ -18,6 +19,8 @@ import os
 import cv2
 import math
 import multiprocessing as mp
+from skimage.transform import resize
+from scipy import sparse
 
 UNKNOWN_FLOW_THRESH = 1e7
 SMALLFLOW = 0.0
@@ -28,8 +31,65 @@ LARGEFLOW = 1e8
 Flow Section
 =============
 """
-
-
+def _FlowResize3d(new_size,img,**kwargs):
+    if img.ndim != 3:
+        raise Exception('Wrong input size array')    
+    H,W,C = img.shape
+    if C !=2 and C !=3:
+        raise Exception('Wrong input size array')
+    
+    img = resize(img,new_size,preserve_range=True,**kwargs)
+    Rh = new_size[0]/H
+    Rw = new_size[1]/W
+    img[...,0] = img[...,0]*Rw
+    img[...,1] = img[...,1]*Rh
+    return img
+#DEPRECATED
+#def _FlowResize4d(new_size,img,**kwargs):
+#    if img.ndim != 4:
+#        raise Exception('Wrong input size array')
+#    N,H,W,C = img.shape
+#    new_size += (C,)
+#    if C !=2 and C !=3:
+#        raise Exception('Wrong input size array')
+#    img = img.transpose(1,2,3,0) #Shape is now H,W,C,N
+#    img = resize(img,new_size,preserve_range=True,**kwargs).transpose(3,0,1,2)
+#    Rh = new_size[0]/H
+#    Rw = new_size[1]/W
+#    img[...,0] = img[...,0]*Rw
+#    img[...,1] = img[...,1]*Rh
+#    return img
+def _FlowResize4d(new_size,img,**kwargs):
+    if img.ndim != 4:
+        raise Exception('Wrong input size array')
+    resizer = FlowResize3d(new_size,**kwargs)
+    output = np.stack(list(map(resizer,img)))       
+    return output
+def FlowResize(new_size,img,**kwargs):
+    dims = img.ndim
+    if dims == 4:
+        return _FlowResize4d(new_size,img,**kwargs)
+    elif dims == 3:
+        return _FlowResize3d(new_size,img,**kwargs)
+    else:
+        raise Exception('Wrong input size array')
+        
+class FlowResize3d(object):
+    def __init__(self,new_size,**kwargs):
+        self.new_size = new_size
+        self.kwargs = kwargs
+    def __call__(self,img):
+        return FlowResize(self.new_size,img,**self.kwargs)
+    def __repr__(self):
+        return 'Optical Flow Resize: {0}'.format(self.new_size)        
+class _FlowResize(object):
+    def __init__(self,new_size,**kwargs):
+        self.new_size = new_size
+        self.kwargs = kwargs
+    def __call__(self,img):
+        return FlowResize(self.new_size,img,**self.kwargs)
+    def __repr__(self):
+        return 'Optical Flow Resize: {0}'.format(self.new_size)
 def show_flow(filename):
     """
     visualize optical flow map using matplotlib
@@ -83,11 +143,11 @@ def visualize_flow(flow, mode='Y'):
         plt.show()
 
     return None
-def fp2int(x,ui=8):
+def fp2int(x,ui,precision): #Recomended precision: 64, Allows to encode flows between [-2,2] with an accuracy 1/64
     uis= str(ui)
-    return np.maximum(np.minimum(x*64.0+2.0**(ui-1),2.0**ui-1),0).astype(np.dtype('uint'+uis))
-def int2fp(x,ui=8):
-    return ((x - 2.0 ** (ui-1)) / 64.0)
+    return np.maximum(np.minimum(x*precision+2.0**(ui-1),2.0**ui-1),0).astype(np.dtype('uint'+uis))
+def int2fp(x,ui,precision):
+    return ((x - 2.0 ** (ui-1)) / precision)
 def read_flow_flo(filename):
     """
     Modified by Juan Montesinos
@@ -121,7 +181,7 @@ def read_flow_flo(filename):
 
 
 
-def read_flow_png(flow_file):
+def read_flow_png(flow_file,precision=64):
     """
     Read optical flow from KITTI .png file
     :param flow_file: name of the flow file
@@ -140,36 +200,50 @@ def read_flow_png(flow_file):
         if not custom:
             flow[i, :, 2] = flow_data[i][2::planes]
 
-    flow[:, :, 0:2] = (flow[:, :, 0:2] - 2 ** 15) / 64.0
+    flow[:, :, 0:2] = (flow[:, :, 0:2] - 2 ** 15) / precision
     if not custom:
         invalid_idx = (flow[:, :, 2] == 0)
         flow[invalid_idx, 0] = 0
         flow[invalid_idx, 1] = 0
     return flow
-
-def read_flow_core(flow_file):
+def read_flow_npy_sparse(flow_file):
+    flow = np.load(flow_file).item()
+    flow = np.array(flow.todense())
+    s = flow.shape
+    flow = flow.reshape(s[0],int(s[1]/2),2)
+    return flow
+def read_flow_core(flow_file,*args,**kwargs):
     filename,extension = os.path.splitext(flow_file)
     if extension =='.png':
-        return read_flow_png(flow_file)
+        return read_flow_png(flow_file,*args,**kwargs)
     elif extension == '.jpg' or extension == '.jpeg':
         x = imageio.imread(flow_file)
-        return int2fp(x[...,:2])
+        return int2fp(x,ui=8,*args,**kwargs)
     elif extension == '.flo':
         return read_flow_flo(flow_file)
+    elif extension == '.npy':
+        return read_flow_npy_sparse(flow_file)
     else:
         raise Exception('Non recognized file format, use .jpg, .jpeg, .flo, .png')
-        
-def read_flow(flow_files):
-    if isinstance(flow_files,str):
-        return read_flow_core(flow_files)
-    elif isinstance(flow_files,list):
-        pool = mp.Pool()
-        results = [pool.apply(read_flow_core, args =(file,)) for file in flow_files]
-        pool.close()
+
+def read_flow(flow_files,multiprocessing=0,*args,**kwargs):
+    if isinstance(flow_files,str) and os.path.isfile(flow_files):
+        return read_flow_core(flow_files,*args,**kwargs)
+    elif (isinstance(flow_files,str) and not os.path.isfile(flow_files)) or isinstance(flow_files,list):
+        if isinstance(flow_files,str):
+            files = sorted(os.listdir(flow_files))
+            flow_files = [os.path.join(flow_files,file) for file in files]           
+        if multiprocessing != 0:
+            pool = mp.Pool(multiprocessing)
+            results = [pool.apply(read_flow_core, args =(file,*args),kwargs=kwargs) for file in flow_files]
+            pool.close()
+        else:
+            results = [read_flow_core(file,*args,**kwargs) for file in flow_files]
         return np.stack(results)
     else:
         raise Exception('Read_flow requires file_path or list of ordered file_paths as input')
-def write_flow_png(flow,filename,error=False):
+def write_flow_png(flow,filename,precision,error=False):
+    precision=float(precision)
     """
     Added by Juan Montesinos
     A random example shows a mean error of 0.0078 with std 0.0045
@@ -188,12 +262,12 @@ def write_flow_png(flow,filename,error=False):
 
     (H,W,C) = flow.shape
     out = np.zeros((H,W,2),dtype=np.uint16)
-    out[:,:,0] =  np.maximum(np.minimum(flow[:,:,0]*64.0+2.0**15,2.0**16-1),0).astype(np.uint16)
-    out[:,:,1] =  np.maximum(np.minimum(flow[:,:,1]*64.0+2.0**15,2.0**16-1),0).astype(np.uint16)
+    out[:,:,0] =  np.maximum(np.minimum(flow[:,:,0]*precision+2.0**15,2.0**16-1),0).astype(np.uint16)
+    out[:,:,1] =  np.maximum(np.minimum(flow[:,:,1]*precision+2.0**15,2.0**16-1),0).astype(np.uint16)
     png.from_array(out,mode='LA').save(os.path.splitext(filename)[0]+'.png')
     if error:
         flow= out.astype(np.float32)   
-        flow[:, :, 0:2] = (flow[:, :, 0:2] - 2 ** 15) / 64.0             
+        flow[:, :, 0:2] = (flow[:, :, 0:2] - 2 ** 15) / precision            
         return flow
 def write_flow_flo(flow, filename):
     """
@@ -202,6 +276,7 @@ def write_flow_flo(flow, filename):
     :param filename: optical flow file path to be saved
     :return: None
     """
+    flow = flow[...,:2]
     f = open(filename, 'wb')
     magic = np.array([202021.25], dtype=np.float32)
     (height, width) = flow.shape[0:2]
@@ -213,7 +288,18 @@ def write_flow_flo(flow, filename):
     flow.tofile(f)
     f.close()
     
-
+def write_flow_npy_sparse(flow,filename,th):
+    """
+    Write optical flow as numpy files containing sparse matrices
+    :param flow: optical flow map
+    :param filename: optical flow file path to be saved
+    :param th: In order to convert optical flows in sparse matrices, pixels 
+    whose magnitude < th will be zeroed.
+    """
+    flow = flow*(np.linalg.norm(flow,axis=2)>th)[...,None]
+    flow=flow.reshape(flow.shape[0],-1)
+    flow = sparse.csr_matrix(flow)
+    np.save(filename,flow)
 def write_flow(flow,filename,**kwargs):
     """
     Write optical flow in png, flo or jpg format.
@@ -229,18 +315,23 @@ def write_flow(flow,filename,**kwargs):
     """
     root,extension = os.path.splitext(filename)
     if extension =='.png':
-        return write_flow_png(flow,filename)
+        return write_flow_png(flow,filename,kwargs['precision'])
     elif extension == '.jpg' or extension == '.jpeg':
-        flow = fp2int(flow)
+        
+        flow = fp2int(flow,8,kwargs['precision'])
         (H,W,C) = flow.shape
         if C == 2:
             zeros = np.zeros((H,W,1),dtype=np.uint8)
             flow = np.concatenate([flow,zeros],axis=2)
+
+            
         imageio.imwrite(filename,flow)        
     elif extension == '.flo':
         write_flow_flo(flow,filename,*kwargs)
+    elif extension == '.npy':
+        write_flow_npy_sparse(flow,filename,kwargs['th'])
     else:
-        raise Exception('Non recognized file format, use .jpg, .jpeg, .flo, .png')    
+        raise Exception('Non recognized file format, use .jpg, .jpeg, .flo, .png, .npy')    
   
 def segment_flow(flow):
     h = flow.shape[0]
