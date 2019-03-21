@@ -9,6 +9,12 @@
 #Modified by Juan Montesinos  2018
 # ==============================
 """
+__author__ = "Juan Montesinos"
+__copyright__ = "Copyright 2018"
+__version__ = "0.1"
+__maintainer__ = "Juan Montesinos"
+__email__ = "juanfelipe.montesinos@upf.edu"
+__status__ = "Stable"
 import png
 import numpy as np
 import matplotlib.colors as cl
@@ -31,6 +37,7 @@ LARGEFLOW = 1e8
 Flow Section
 =============
 """
+__all__=['FlowResize','visualize_flow','read_flow','write_flow','fp2int','int2fp','colortest']
 def _FlowResize3d(new_size,img,**kwargs):
     if img.ndim != 3:
         raise Exception('Wrong input size array')    

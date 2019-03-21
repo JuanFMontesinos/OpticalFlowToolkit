@@ -2,22 +2,20 @@
 # -*- coding: utf-8 -*-
 __author__ = "Juan Montesinos"
 __copyright__ = "Copyright 2018"
-__license__ = "GPL"
-__version__ = "0.2"
+__version__ = "0.1"
 __maintainer__ = "Juan Montesinos"
 __email__ = "juanfelipe.montesinos@upf.edu"
 __status__ = "Stable"
 
 
 import numpy as np
-from flowlib import *
+from .flowlib import *
 import multiprocessing as mp
 import matplotlib.pyplot as plt
 import imageio
 from functools import partial
-from interactive_flow import window
-import cv2
-import os
+from .interactive_flow import window
+
 __all__=['npflow']
 class npflow(np.ndarray):
 
@@ -120,8 +118,32 @@ class npflow(np.ndarray):
                 flow = self.__call__()
                 pool = mp.Pool()
                 results = [pool.apply_async(partial(write_flow,**kwargs), args =(flow[i,...],file)) for i,file in zip(idx,filename)]
-                pool.close()                       
-#vsp=npflow('/media/jfm/Slave/flowfusion_16/cello/cello01_6to13/cello01_6to13flow0141.npy')
-#vsp= npflow(np.stack([vsp,vsp+0.1,vsp+0.2,vsp+1,vsp-1]))
-#vsp.interactive()
-        
+                pool.close()
+    def mag(self):
+        if self.isflow:
+            return np.linalg.norm(self[...,:2],axis=2)
+        else:
+            return np.linalg.norm(self[...,:2],axis=3)
+                               
+    def see_and_listen(self):
+        from sklearn.mixture import GaussianMixture
+        from sklearn.decomposition import PCA
+        if self.isflow:
+            raise Exception('Not available for single optical flow, use video sequence')
+        sum_mag = self.mag().sum(0)
+#       To implement more than 1 player per video
+        predictions = sum_mag>(sum_mag.mean()+sum_mag.std()).astype(bool)
+        ux = []
+        uy = []
+        for flow in self:
+            ux.append(flow[...,0][predictions].mean())
+            uy.append(flow[...,1][predictions].mean())
+        ux = np.stack(ux)
+        uy = np.stack(uy)
+        u = np.stack([ux,uy],axis=1)
+        self.pca = PCA(n_components=1)
+        self.pca.fit(u)
+        return sum_mag,self.pca.transform(u)[:,0]/np.linalg.norm(self.pca.components_)
+d='/media/jfm/SlaveSSD/flowfusion_16npy/cello/cello11_288to295'
+f = npflow(d,precision=16)
+s,v=f.see_and_listen()
