@@ -1,6 +1,7 @@
 # OpticalFlowToolkit
 Set of tools for reading, visualizing,writting and computing error  optical flow in middlebury/kitti format.
 Numpy warper to create OF class fully compatible. 
+`pip3 install pynpflow`  
 ## Contents  
 There are two main files. flowlib provides simple functions directly relying on the mentioned libraries. All of them takes flows/paths_to_flows as input, therefore they can be easily used for a certain task.  
 
