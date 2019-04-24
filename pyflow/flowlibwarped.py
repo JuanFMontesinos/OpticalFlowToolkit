@@ -144,6 +144,3 @@ class npflow(np.ndarray):
         self.pca = PCA(n_components=1)
         self.pca.fit(u)
         return sum_mag,self.pca.transform(u)[:,0]/np.linalg.norm(self.pca.components_)
-d='/media/jfm/SlaveSSD/flowfusion_16npy/cello/cello11_288to295'
-f = npflow(d,precision=16)
-s,v=f.see_and_listen()
